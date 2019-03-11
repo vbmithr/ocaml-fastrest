@@ -1,0 +1,16 @@
+(library
+ (name        fastrest)
+ (public_name fastrest)
+ (modules fastrest)
+ (preprocess (pps ppx_sexp_conv))
+ (libraries
+  base64
+  digestif.c
+  ptime
+  uri
+  logs-async
+  conduit-async
+  httpaf
+  httpaf-async
+  ezjsonm
+  ocplib-json-typed))
