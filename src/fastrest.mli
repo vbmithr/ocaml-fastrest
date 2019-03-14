@@ -1,4 +1,3 @@
-open Core
 open Async
 open Httpaf
 
@@ -10,6 +9,7 @@ end
 type auth = {
   key : string ;
   secret : string ;
+  meta : (string * string) list ;
 }
 
 type auth_result = {
@@ -41,6 +41,9 @@ type ('meth, 'ok, 'error) service = {
 
 and ('meth, 'ok, 'error) authf =
   (('meth, 'ok, 'error) service -> auth -> auth_result)
+
+val body_hdrs_of_service :
+  ('meth, 'ok, 'error) service -> (Headers.t * string) option
 
 val get :
   ?auth:(get, 'ok, 'error) authf ->

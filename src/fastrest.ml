@@ -30,6 +30,7 @@ type 'a error =
 type auth = {
   key : string ;
   secret : string ;
+  meta : (string * string) list ;
 }
 
 type auth_result = {
@@ -37,11 +38,6 @@ type auth_result = {
   headers : Headers.t ;
 }
 
-let ezjsonm_of_params params =
-  let fields = List.map params ~f:begin fun (k, vs) ->
-      k, `String (String.concat vs)
-    end in
-  `O fields
 
 type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
@@ -54,6 +50,31 @@ type ('meth, 'ok, 'error) service = {
 
 and ('meth, 'ok, 'error) authf =
   (('meth, 'ok, 'error) service -> auth -> auth_result)
+
+let body_hdrs_of_service (type a) (srv : (a, 'ok, 'error) service) =
+  let ezjsonm_of_params params =
+    let fields = List.map params ~f:begin fun (k, vs) ->
+        k, `String (String.concat vs)
+      end in
+    `O fields in
+  match srv.meth with
+  | Get -> None
+  | PostForm ->
+    let str = Uri.encoded_of_query srv.params in
+    let hdrs =
+      Headers.of_list [
+        "Content-Type", "application/x-www-form-urlencoded" ;
+        "Content-Length", string_of_int (String.length str) ;
+      ] in
+    Some (hdrs, str)
+  | PostJson ->
+    let str = Ezjsonm.to_string (ezjsonm_of_params srv.params) in
+    let hdrs =
+      Headers.of_list [
+        "Content-Type", "application/json" ;
+        "Content-Length", string_of_int (String.length str) ;
+      ] in
+    Some (hdrs, str)
 
 let get ?auth ?(params=[]) encoding url =
   let target = Uri.path_and_query url in
@@ -84,53 +105,40 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
   in
   let response_handler response body =
     Logs.debug ~src (fun m -> m "%a" Response.pp_hum response) ;
-    match response with
-    | { Response.status = `OK ; _ } ->
-      let buffer = Buffer.create 32 in
-      let on_eof () =
-        let buf_str = Buffer.contents buffer in
-        Logs.debug ~src (fun m -> m "%s" buf_str) ;
-        let resp_json = Ezjsonm.from_string buf_str in
-        match Ezjsonm_encoding.destruct_safe
-                service.encoding resp_json with
-        | Error e -> Ivar.fill error_iv (Error (App e))
-        | Ok v -> Ivar.fill resp_iv (Ok v)
-      in
-      let rec on_read buf ~off ~len =
-        Buffer.add_string buffer (Bigstringaf.substring buf ~off ~len) ;
-        Body.schedule_read body ~on_eof ~on_read
-      in
+    let buffer = Buffer.create 32 in
+    let on_eof () =
+      let buf_str = Buffer.contents buffer in
+      Logs.debug ~src (fun m -> m "%s" buf_str) ;
+      let resp_json = Ezjsonm.from_string buf_str in
+      match Ezjsonm_encoding.destruct_safe
+              service.encoding resp_json with
+      | Error e -> Ivar.fill error_iv (Error (App e))
+      | Ok v -> Ivar.fill resp_iv (Ok v)
+    in
+    let rec on_read buf ~off ~len =
+      Buffer.add_string buffer (Bigstringaf.substring buf ~off ~len) ;
       Body.schedule_read body ~on_eof ~on_read
-    | _ ->
-      Logs.err ~src (fun m -> m "Error response")
+    in
+    Body.schedule_read body ~on_eof ~on_read
   in
-  let params, headers = match service.meth, service.auth, auth with
-    | _, _, None -> service.params, service.req.headers
-    | Get, _, _ -> service.params, service.req.headers
-    | _, None, _ -> service.params, service.req.headers
+  let service = match service.meth, service.auth, auth with
+    | _, _, None -> service
+    | _, None, _ -> service
     | _, Some authf, Some auth ->
       let { params ; headers } = authf service auth in
-      params @ service.params,
-      Headers.(add_list service.req.headers (to_list headers)) in
-  let headers = Headers.add_list headers [
+      { service with
+        params = params @ service.params ;
+        req = { service.req with headers = Headers.(add_list service.req.headers (to_list headers)) }
+      } in
+  let headers = Headers.add_list service.req.headers [
       "User-Agent", "ocaml-fastrest" ;
       "Host", Uri.host_with_default ~default:"" service.url ;
     ] in
-  let headers, params_str = match service.meth with
-    | Get -> headers, None
-    | PostForm ->
-      let params_str = Uri.encoded_of_query params in
-      Headers.add_list headers [
-        "Content-Type", "application/x-www-form-urlencoded" ;
-        "Content-Length", string_of_int (String.length params_str) ;
-      ], Some params_str
-    | PostJson ->
-      let params_str = Ezjsonm.to_string (ezjsonm_of_params params) in
-      Headers.add_list headers [
-        "Content-Type", "application/json" ;
-        "Content-Length", string_of_int (String.length params_str) ;
-      ], Some params_str
-  in
+  let headers, params_str =
+    match body_hdrs_of_service service with
+    | None -> headers, None
+    | Some (hdrs, params_str) ->
+      Headers.(add_list headers (to_list hdrs)), Some params_str in
   let req = { service.req with headers } in
   Conduit_async.V3.with_connection_uri service.url begin fun _ r w ->
     let body, conn =
