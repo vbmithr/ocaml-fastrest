@@ -13,6 +13,8 @@ module Ezjsonm_encoding = struct
 end
 
 let src = Logs.Src.create "fastrest"
+module Log = (val Logs.src_log src : Logs.LOG)
+module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
 
 type get
 type post_form
@@ -104,11 +106,11 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     Ivar.fill error_iv (Error (Http err))
   in
   let response_handler response body =
-    Logs.debug ~src (fun m -> m "%a" Response.pp_hum response) ;
+    Log.debug (fun m -> m "%a" Response.pp_hum response) ;
     let buffer = Buffer.create 32 in
     let on_eof () =
       let buf_str = Buffer.contents buffer in
-      Logs.debug ~src (fun m -> m "%s" buf_str) ;
+      Log.debug (fun m -> m "%s" buf_str) ;
       let resp_json = Ezjsonm.from_string buf_str in
       match Ezjsonm_encoding.destruct_safe
               service.encoding resp_json with
@@ -165,12 +167,12 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
           | `Eof_with_unconsumed_data _ -> Deferred.unit
           | `Stopped () -> read_response ()
         end in
-    Logs_async.debug ~src
+    Log_async.debug
       (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
     begin
       match params_str with
       | Some ps ->
-        Logs.debug ~src (fun m -> m "%s" ps) ;
+        Log.debug (fun m -> m "%s" ps) ;
         Body.write_string body ps
       | _ -> ()
     end ;
@@ -182,16 +184,16 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
 
 let error_handler = function
   | `Exn exn ->
-    Logs.err ~src (fun m -> m "%a" Exn.pp exn)
+    Log.err (fun m -> m "%a" Exn.pp exn)
   | `Invalid_response_body_length r ->
-    Logs.err ~src (fun m -> m "Invalid_response_body_length %a" Response.pp_hum r)
+    Log.err (fun m -> m "Invalid_response_body_length %a" Response.pp_hum r)
   | `Malformed_response r ->
-    Logs.err ~src (fun m -> m "Malformed response %s" r)
+    Log.err (fun m -> m "Malformed response %s" r)
 
 let simple_call ?(headers=Headers.empty) ?body ~meth url =
   let resp_iv = Ivar.create () in
   let response_handler response body =
-    Logs.debug ~src (fun m -> m "%a" Response.pp_hum response) ;
+    Log.debug (fun m -> m "%a" Response.pp_hum response) ;
     let buff = Buffer.create 32 in
     let on_eof () =
       Ivar.fill resp_iv (response, if Buffer.length buff = 0 then None
@@ -237,13 +239,12 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
           | `Eof_with_unconsumed_data _ -> Deferred.unit
           | `Stopped () -> read_response ()
         end in
-    Logs_async.debug ~src
-      (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
+    Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
     begin
       match body with
       | None -> ()
       | Some body ->
-        Logs.debug ~src (fun m -> m "%s" body) ;
+        Log.debug (fun m -> m "%s" body) ;
         Body.write_string body_writer body
     end ;
     flush_req () ;
