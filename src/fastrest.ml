@@ -179,3 +179,74 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     Deferred.any [Ivar.read resp_iv ;
                   Ivar.read error_iv]
   end
+
+let error_handler = function
+  | `Exn exn ->
+    Logs.err ~src (fun m -> m "%a" Exn.pp exn)
+  | `Invalid_response_body_length r ->
+    Logs.err ~src (fun m -> m "Invalid_response_body_length %a" Response.pp_hum r)
+  | `Malformed_response r ->
+    Logs.err ~src (fun m -> m "Malformed response %s" r)
+
+let simple_call ?(headers=Headers.empty) ?body ~meth url =
+  let resp_iv = Ivar.create () in
+  let response_handler response body =
+    Logs.debug ~src (fun m -> m "%a" Response.pp_hum response) ;
+    let buff = Buffer.create 32 in
+    let on_eof () =
+      Ivar.fill resp_iv (response, if Buffer.length buff = 0 then None
+                         else Some (Buffer.contents buff)) in
+    let rec on_read buf ~off ~len =
+      Buffer.add_string buff (Bigstringaf.substring buf ~off ~len) ;
+      Body.schedule_read body ~on_eof ~on_read
+    in
+    Body.schedule_read body ~on_eof ~on_read
+  in
+  let headers = Headers.add_list headers [
+      "User-Agent", "ocaml-fastrest" ;
+      "Host", Uri.host_with_default ~default:"" url ;
+    ] in
+  let headers = match body with
+    | None -> headers
+    | Some body ->
+      Headers.add headers "Content-Length"
+        (Int.to_string (String.(length body))) in
+  Async_uri.with_connection_uri url begin fun _url _ r w ->
+    let req = Request.create ~headers meth (Uri.path_and_query url) in
+    let body_writer, conn =
+      Client_connection.request req ~error_handler ~response_handler in
+    let rec flush_req () =
+      match Client_connection.next_write_operation conn with
+      | `Write iovec ->
+        let nb_read = write_iovec w iovec in
+        Client_connection.report_write_result conn (`Ok nb_read) ;
+        flush_req ()
+      | `Yield ->
+        Client_connection.yield_writer conn flush_req ;
+      | `Close _ -> () in
+    let rec read_response () =
+      match Client_connection.next_read_operation conn with
+      | `Close -> Deferred.unit
+      | `Read -> begin
+          Reader.read_one_chunk_at_a_time r
+            ~handle_chunk:begin fun buf ~pos ~len ->
+              let nb_read = Client_connection.read conn buf ~off:pos ~len in
+              return (`Stop_consumed ((), nb_read))
+            end >>= function
+          | `Eof -> Deferred.unit
+          | `Eof_with_unconsumed_data _ -> Deferred.unit
+          | `Stopped () -> read_response ()
+        end in
+    Logs_async.debug ~src
+      (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
+    begin
+      match body with
+      | None -> ()
+      | Some body ->
+        Logs.debug ~src (fun m -> m "%s" body) ;
+        Body.write_string body_writer body
+    end ;
+    flush_req () ;
+    don't_wait_for (read_response ()) ;
+    Ivar.read resp_iv
+  end

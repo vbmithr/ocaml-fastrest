@@ -67,3 +67,8 @@ val request :
   ?auth:auth ->
   ('meth, 'ok, 'error) service ->
   ('ok, 'error error) result Deferred.t
+
+val simple_call :
+  ?headers:Headers.t ->
+  ?body:string ->
+  meth:Method.t -> Uri.t -> (Response.t * string option) Deferred.t
