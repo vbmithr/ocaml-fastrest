@@ -140,7 +140,7 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     | Some (hdrs, params_str) ->
       Headers.(add_list headers (to_list hdrs)), Some params_str in
   let req = { service.req with headers } in
-  Conduit_async.V3.with_connection_uri service.url begin fun _ r w ->
+  Async_uri.with_connection_uri service.url begin fun _url _ r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
     let rec flush_req () =

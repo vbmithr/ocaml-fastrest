@@ -9,8 +9,8 @@
   ptime
   uri
   logs-async
-  conduit-async
   httpaf
   httpaf-async
+  async-uri
   ezjsonm
   ocplib-json-typed))
