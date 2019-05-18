@@ -142,7 +142,7 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     | Some (hdrs, params_str) ->
       Headers.(add_list headers (to_list hdrs)), Some params_str in
   let req = { service.req with headers } in
-  Async_uri.with_connection_uri service.url begin fun _url _ r w ->
+  Async_uri.with_connection service.url begin fun _sock _conn r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
     let rec flush_req () =
@@ -213,7 +213,7 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
     | Some body ->
       Headers.add headers "Content-Length"
         (Int.to_string (String.(length body))) in
-  Async_uri.with_connection_uri url begin fun _url _ r w ->
+  Async_uri.with_connection url begin fun _sock _conn r w ->
     let req = Request.create ~headers meth (Uri.path_and_query url) in
     let body_writer, conn =
       Client_connection.request req ~error_handler ~response_handler in
