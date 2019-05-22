@@ -111,6 +111,32 @@ let write_iovec w iovec =
     a+len
   end
 
+let rec flush_req conn w =
+  match Client_connection.next_write_operation conn with
+  | `Write iovec ->
+    let nb_read = write_iovec w iovec in
+    Client_connection.report_write_result conn (`Ok nb_read) ;
+    flush_req conn w
+  | `Yield ->
+    Client_connection.yield_writer conn (fun () -> flush_req conn w) ;
+  | `Close _ -> ()
+
+let read_response conn r =
+  Log_async.debug (fun m -> m "read_response") >>= fun () ->
+  match Client_connection.next_read_operation conn with
+  | `Close -> Deferred.unit
+  | `Read -> begin
+      Reader.read_one_chunk_at_a_time r
+        ~handle_chunk:begin fun buf ~pos ~len ->
+          let nb_read = Client_connection.read conn buf ~off:pos ~len in
+          return (`Consumed (nb_read, `Need_unknown))
+        end >>= function
+      | `Stopped () -> assert false (* cannot happen *)
+      | `Eof -> Deferred.unit (* normal case *)
+      | `Eof_with_unconsumed_data _ ->
+        Log_async.err (fun m -> m "Got EOF with unconsumed data")
+    end
+
 let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
   let error_iv = Ivar.create () in
   let resp_iv = Ivar.create () in
@@ -119,9 +145,9 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
   in
   let response_handler response body =
     Log.debug (fun m -> m "%a" Response.pp_hum response) ;
-    let buffer = Buffer.create 32 in
+    let buffer = Bigbuffer.create 32 in
     let on_eof () =
-      let buf_str = Buffer.contents buffer in
+      let buf_str = Bigbuffer.contents buffer in
       Log.debug (fun m -> m "%s" buf_str) ;
       let resp_json = Ezjsonm.from_string buf_str in
       match Ezjsonm_encoding.destruct_safe
@@ -130,7 +156,8 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
       | Ok v -> Ivar.fill resp_iv (Ok v)
     in
     let rec on_read buf ~off ~len =
-      Buffer.add_string buffer (Bigstringaf.substring buf ~off ~len) ;
+      let str = Bigstringaf.sub buf ~off ~len in
+      Bigbuffer.add_bigstring buffer str ;
       Body.schedule_read body ~on_eof ~on_read
     in
     Body.schedule_read body ~on_eof ~on_read
@@ -157,28 +184,6 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
   Async_uri.with_connection service.url begin fun _sock _conn r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
-    let rec flush_req () =
-      match Client_connection.next_write_operation conn with
-      | `Write iovec ->
-        let nb_read = write_iovec w iovec in
-        Client_connection.report_write_result conn (`Ok nb_read) ;
-        flush_req ()
-      | `Yield ->
-        Client_connection.yield_writer conn flush_req ;
-      | `Close _ -> () in
-    let rec read_response () =
-      match Client_connection.next_read_operation conn with
-      | `Close -> Deferred.unit
-      | `Read -> begin
-          Reader.read_one_chunk_at_a_time r
-            ~handle_chunk:begin fun buf ~pos ~len ->
-              let nb_read = Client_connection.read conn buf ~off:pos ~len in
-              return (`Stop_consumed ((), nb_read))
-            end >>= function
-          | `Eof -> Deferred.unit
-          | `Eof_with_unconsumed_data _ -> Deferred.unit
-          | `Stopped () -> read_response ()
-        end in
     Log_async.debug
       (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
     begin
@@ -188,8 +193,8 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
         Body.write_string body ps
       | _ -> ()
     end ;
-    flush_req () ;
-    don't_wait_for (read_response ()) ;
+    flush_req conn w ;
+    don't_wait_for (read_response conn r) ;
     Deferred.any [Ivar.read resp_iv ;
                   Ivar.read error_iv]
   end
@@ -229,28 +234,6 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
     let req = Request.create ~headers meth (Uri.path_and_query url) in
     let body_writer, conn =
       Client_connection.request req ~error_handler ~response_handler in
-    let rec flush_req () =
-      match Client_connection.next_write_operation conn with
-      | `Write iovec ->
-        let nb_read = write_iovec w iovec in
-        Client_connection.report_write_result conn (`Ok nb_read) ;
-        flush_req ()
-      | `Yield ->
-        Client_connection.yield_writer conn flush_req ;
-      | `Close _ -> () in
-    let rec read_response () =
-      match Client_connection.next_read_operation conn with
-      | `Close -> Deferred.unit
-      | `Read -> begin
-          Reader.read_one_chunk_at_a_time r
-            ~handle_chunk:begin fun buf ~pos ~len ->
-              let nb_read = Client_connection.read conn buf ~off:pos ~len in
-              return (`Stop_consumed ((), nb_read))
-            end >>= function
-          | `Eof -> Deferred.unit
-          | `Eof_with_unconsumed_data _ -> Deferred.unit
-          | `Stopped () -> read_response ()
-        end in
     Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
     begin
       match body with
@@ -259,7 +242,7 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
         Log.debug (fun m -> m "%s" body) ;
         Body.write_string body_writer body
     end ;
-    flush_req () ;
-    don't_wait_for (read_response ()) ;
+    flush_req conn w ;
+    don't_wait_for (read_response conn r) ;
     Ivar.read resp_iv
   end
