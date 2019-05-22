@@ -30,6 +30,9 @@ type 'a error =
   | Http of Client_connection.error
   | App of 'a
 
+val pp_print_error :
+  (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a error -> unit
+
 type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;

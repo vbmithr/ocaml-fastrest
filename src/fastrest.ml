@@ -29,6 +29,18 @@ type 'a error =
   | Http of Client_connection.error
   | App of 'a
 
+let pp_cc_error ppf = function
+  | `Exn e ->
+    Format.fprintf ppf "Exn %a" Exn.pp e
+  | `Invalid_response_body_length r ->
+    Format.fprintf ppf "Invalid_response_body_length %a" Response.pp_hum r
+  | `Malformed_response s ->
+    Format.fprintf ppf "Malformed_response %s" s
+
+let pp_print_error pp_error ppf = function
+  | Http e -> Format.fprintf ppf "Http %a" pp_cc_error e
+  | App e -> Format.fprintf ppf "App %a" pp_error e
+
 type auth = {
   key : string ;
   secret : string ;
