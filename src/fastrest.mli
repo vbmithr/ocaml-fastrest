@@ -36,7 +36,6 @@ val pp_print_error :
 type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;
-  req : Request.t ;
   encoding : ('ok, 'error) result Json_encoding.encoding ;
   params : (string * string list) list ;
   auth : ('meth, 'ok, 'error) authf option ;

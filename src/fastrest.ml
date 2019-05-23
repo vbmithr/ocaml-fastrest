@@ -25,6 +25,11 @@ type _ meth =
   | PostForm : post_form meth
   | PostJson : post_json meth
 
+let to_method : type a. a meth -> Method.t = function
+  | Get -> `GET
+  | PostForm -> `POST
+  | PostJson -> `POST
+
 type 'a error =
   | Http of Client_connection.error
   | App of 'a
@@ -52,11 +57,9 @@ type auth_result = {
   headers : Headers.t ;
 }
 
-
 type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;
-  req : Request.t ;
   encoding : ('ok, 'error) result Json_encoding.encoding ;
   params : (string * string list) list ;
   auth : ('meth, 'ok, 'error) authf option ;
@@ -91,19 +94,13 @@ let body_hdrs_of_service (type a) (srv : (a, 'ok, 'error) service) =
     Some (hdrs, str)
 
 let get ?auth ?(params=[]) encoding url =
-  let target = Uri.path_and_query url in
-  let req = Request.create `GET target in
-  { meth = Get ; url ; req ; encoding ; params ; auth }
+  { meth = Get ; url ; encoding ; params ; auth }
 
 let post_form ?auth ?(params=[]) encoding url =
-  let target = Uri.path_and_query url in
-  let req = Request.create `POST target in
-  { meth = PostForm ; url ; req ; encoding ; params ; auth }
+  { meth = PostForm ; url ; encoding ; params ; auth }
 
 let post_json ?auth ?(params=[]) encoding url =
-  let target = Uri.path_and_query url in
-  let req = Request.create `POST target in
-  { meth = PostJson ; url ; req ; encoding ; params ; auth }
+  { meth = PostJson ; url ; encoding ; params ; auth }
 
 let write_iovec w iovec =
   List.fold_left iovec ~init:0 ~f:begin fun a { Faraday.buffer ; off ; len } ->
@@ -162,16 +159,18 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     in
     Body.schedule_read body ~on_eof ~on_read
   in
-  let service = match service.meth, service.auth, auth with
-    | _, _, None -> service
-    | _, None, _ -> service
-    | _, Some authf, Some auth ->
+  let req =
+    Request.create (to_method service.meth) (Uri.path_and_query service.url) in
+  let req, service = match service.auth, auth with
+    | _, None -> req, service
+    | None, _ -> req, service
+    | Some authf, Some auth ->
       let { params ; headers } = authf service auth in
+      { req with headers = Headers.(add_list req.headers (to_list headers)) },
       { service with
         params = params @ service.params ;
-        req = { service.req with headers = Headers.(add_list service.req.headers (to_list headers)) }
       } in
-  let headers = Headers.add_list service.req.headers [
+  let headers = Headers.add_list req.headers [
       "User-Agent", "ocaml-fastrest" ;
       "Host", Uri.host_with_default ~default:"" service.url ;
     ] in
@@ -180,7 +179,7 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     | None -> headers, None
     | Some (hdrs, params_str) ->
       Headers.(add_list headers (to_list hdrs)), Some params_str in
-  let req = { service.req with headers } in
+  let req = { req with headers } in
   Async_uri.with_connection service.url begin fun _sock _conn r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
