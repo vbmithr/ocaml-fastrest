@@ -12,6 +12,10 @@ type auth = {
   meta : (string * string) list ;
 }
 
+val auth :
+  ?meta:(string * string) list ->
+  key:string -> secret:string -> unit -> auth
+
 type auth_result = {
   params : (string * string list) list ;
   headers : Headers.t ;
@@ -20,11 +24,17 @@ type auth_result = {
 type get
 type post_form
 type post_json
+type put_form
+type put_json
+type delete
 
 type _ meth =
   | Get : get meth
   | PostForm : post_form meth
   | PostJson : post_json meth
+  | PutForm : put_form meth
+  | PutJson : put_json meth
+  | Delete : delete meth
 
 type 'a error =
   | Http of Client_connection.error
@@ -49,7 +59,6 @@ val body_hdrs_of_service :
 
 val get :
   ?auth:(get, 'ok, 'error) authf ->
-  ?params:(string * string list) list ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (get, 'ok, 'error) service
 
@@ -64,6 +73,23 @@ val post_json :
   ?params:(string * string list) list ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (post_json, 'ok, 'error) service
+
+val put_form :
+  ?auth:(put_form, 'ok, 'error) authf ->
+  ?params:(string * string list) list ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (put_form, 'ok, 'error) service
+
+val put_json :
+  ?auth:(put_json, 'ok, 'error) authf ->
+  ?params:(string * string list) list ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (put_json, 'ok, 'error) service
+
+val delete :
+  ?auth:(delete, 'ok, 'error) authf ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (delete, 'ok, 'error) service
 
 val request :
   ?auth:auth ->

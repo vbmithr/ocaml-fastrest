@@ -19,16 +19,25 @@ module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
 type get
 type post_form
 type post_json
+type put_form
+type put_json
+type delete
 
 type _ meth =
   | Get : get meth
   | PostForm : post_form meth
   | PostJson : post_json meth
+  | PutForm : put_form meth
+  | PutJson : put_json meth
+  | Delete : delete meth
 
 let to_method : type a. a meth -> Method.t = function
   | Get -> `GET
   | PostForm -> `POST
   | PostJson -> `POST
+  | PutForm -> `PUT
+  | PutJson -> `PUT
+  | Delete -> `DELETE
 
 type 'a error =
   | Http of Client_connection.error
@@ -52,6 +61,8 @@ type auth = {
   meta : (string * string) list ;
 }
 
+let auth ?(meta=[]) ~key ~secret () = { meta ; key ; secret }
+
 type auth_result = {
   params : (string * string list) list ;
   headers : Headers.t ;
@@ -68,7 +79,26 @@ type ('meth, 'ok, 'error) service = {
 and ('meth, 'ok, 'error) authf =
   (('meth, 'ok, 'error) service -> auth -> auth_result)
 
-let body_hdrs_of_service (type a) (srv : (a, 'ok, 'error) service) =
+let get ?auth encoding url =
+  { meth = Get ; url ; encoding ; params = [] ; auth }
+
+let post_form ?auth ?(params=[]) encoding url =
+  { meth = PostForm ; url ; encoding ; params ; auth }
+
+let post_json ?auth ?(params=[]) encoding url =
+  { meth = PostJson ; url ; encoding ; params ; auth }
+
+let put_form ?auth ?(params=[]) encoding url =
+  { meth = PutForm ; url ; encoding ; params ; auth }
+
+let put_json ?auth ?(params=[]) encoding url =
+  { meth = PutJson ; url ; encoding ; params ; auth }
+
+let delete ?auth encoding url =
+  { meth = Delete ; url ; encoding ; params = [] ; auth }
+
+let body_hdrs_of_service :
+  type a. (a, 'ok, 'error) service -> (Headers.t * string) option = fun srv ->
   let ezjsonm_of_params params =
     let fields = List.map params ~f:begin fun (k, vs) ->
         k, `String (String.concat vs)
@@ -76,7 +106,16 @@ let body_hdrs_of_service (type a) (srv : (a, 'ok, 'error) service) =
     `O fields in
   match srv.meth with
   | Get -> None
+  | Delete -> None
   | PostForm ->
+    let str = Uri.encoded_of_query srv.params in
+    let hdrs =
+      Headers.of_list [
+        "Content-Type", "application/x-www-form-urlencoded" ;
+        "Content-Length", string_of_int (String.length str) ;
+      ] in
+    Some (hdrs, str)
+  | PutForm ->
     let str = Uri.encoded_of_query srv.params in
     let hdrs =
       Headers.of_list [
@@ -92,15 +131,14 @@ let body_hdrs_of_service (type a) (srv : (a, 'ok, 'error) service) =
         "Content-Length", string_of_int (String.length str) ;
       ] in
     Some (hdrs, str)
-
-let get ?auth ?(params=[]) encoding url =
-  { meth = Get ; url ; encoding ; params ; auth }
-
-let post_form ?auth ?(params=[]) encoding url =
-  { meth = PostForm ; url ; encoding ; params ; auth }
-
-let post_json ?auth ?(params=[]) encoding url =
-  { meth = PostJson ; url ; encoding ; params ; auth }
+  | PutJson ->
+    let str = Ezjsonm.to_string (ezjsonm_of_params srv.params) in
+    let hdrs =
+      Headers.of_list [
+        "Content-Type", "application/json" ;
+        "Content-Length", string_of_int (String.length str) ;
+      ] in
+    Some (hdrs, str)
 
 let write_iovec w iovec =
   List.fold_left iovec ~init:0 ~f:begin fun a { Faraday.buffer ; off ; len } ->
@@ -159,17 +197,31 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     in
     Body.schedule_read body ~on_eof ~on_read
   in
-  let req =
-    Request.create (to_method service.meth) (Uri.path_and_query service.url) in
-  let req, service = match service.auth, auth with
-    | _, None -> req, service
-    | None, _ -> req, service
-    | Some authf, Some auth ->
+  let req = Request.create (to_method service.meth)
+      (Uri.path_and_query service.url) in
+  let req, service = match req.meth, service.auth, auth with
+    | _, _, None -> req, service
+    | _, None, _ -> req, service
+    | `POST, Some authf, Some auth ->
       let { params ; headers } = authf service auth in
       { req with headers = Headers.(add_list req.headers (to_list headers)) },
-      { service with
-        params = params @ service.params ;
-      } in
+      { service with params }
+    | `GET, Some authf, Some auth ->
+      let params = Uri.query service.url in
+      let { params ; headers } = authf { service with params } auth in
+      { req with
+        headers = Headers.(add_list req.headers (to_list headers)) ;
+        target = Uri.(path_and_query (with_query service.url params)) ;
+      }, service
+    | `DELETE, Some authf, Some auth ->
+      let params = Uri.query service.url in
+      let { params ; headers } = authf { service with params } auth in
+      { req with
+        headers = Headers.(add_list req.headers (to_list headers)) ;
+        target = Uri.(path_and_query (with_query service.url params)) ;
+      }, service
+    | _ -> invalid_arg "unsupported"
+  in
   let headers = Headers.add_list req.headers [
       "User-Agent", "ocaml-fastrest" ;
       "Host", Uri.host_with_default ~default:"" service.url ;
@@ -180,11 +232,10 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
     | Some (hdrs, params_str) ->
       Headers.(add_list headers (to_list hdrs)), Some params_str in
   let req = { req with headers } in
+  Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
   Async_uri.with_connection service.url begin fun _sock _conn r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
-    Log_async.debug
-      (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
     begin
       match params_str with
       | Some ps ->
