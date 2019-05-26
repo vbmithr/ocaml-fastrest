@@ -259,18 +259,16 @@ let error_handler = function
 
 let simple_call ?(headers=Headers.empty) ?body ~meth url =
   let resp_iv = Ivar.create () in
+  let pr, pw = Pipe.create () in
   let response_handler response body =
     Log.debug (fun m -> m "%a" Response.pp_hum response) ;
-    let buff = Buffer.create 32 in
-    let on_eof () =
-      Ivar.fill resp_iv (response, if Buffer.length buff = 0 then None
-                         else Some (Buffer.contents buff)) in
+    Ivar.fill_if_empty resp_iv response ;
+    let on_eof () = Pipe.close pw in
     let rec on_read buf ~off ~len =
-      Buffer.add_string buff (Bigstringaf.substring buf ~off ~len) ;
+      Pipe.write_without_pushback_if_open pw (Bigstringaf.substring buf ~off ~len) ;
       Body.schedule_read body ~on_eof ~on_read
     in
-    Body.schedule_read body ~on_eof ~on_read
-  in
+    Body.schedule_read body ~on_eof ~on_read in
   let headers = Headers.add_list headers [
       "User-Agent", "ocaml-fastrest" ;
       "Host", Uri.host_with_default ~default:"" url ;
@@ -280,19 +278,23 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
     | Some body ->
       Headers.add headers "Content-Length"
         (Int.to_string (String.(length body))) in
-  Async_uri.with_connection url begin fun _sock _conn r w ->
-    let req = Request.create ~headers meth (Uri.path_and_query url) in
-    let body_writer, conn =
-      Client_connection.request req ~error_handler ~response_handler in
-    Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
-    begin
-      match body with
-      | None -> ()
-      | Some body ->
-        Log.debug (fun m -> m "%s" body) ;
-        Body.write_string body_writer body
-    end ;
-    flush_req conn w ;
-    don't_wait_for (read_response conn r) ;
-    Ivar.read resp_iv
-  end
+  Async_uri.connect url >>= fun (_sock, _conn, r, w) ->
+  let req = Request.create ~headers meth (Uri.path_and_query url) in
+  let body_writer, conn =
+    Client_connection.request req ~error_handler ~response_handler in
+  Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
+  begin
+    match body with
+    | None -> ()
+    | Some body ->
+      Log.debug (fun m -> m "%s" body) ;
+      Body.write_string body_writer body
+  end ;
+  flush_req conn w ;
+  don't_wait_for (read_response conn r) ;
+  don't_wait_for begin Pipe.closed pw >>= fun () ->
+    Reader.close r >>= fun () ->
+    Writer.close w
+  end ;
+  Ivar.read resp_iv >>= fun resp ->
+  return (resp, pr)

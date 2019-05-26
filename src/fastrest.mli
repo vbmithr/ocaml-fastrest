@@ -99,4 +99,4 @@ val request :
 val simple_call :
   ?headers:Headers.t ->
   ?body:string ->
-  meth:Method.t -> Uri.t -> (Response.t * string option) Deferred.t
+  meth:Method.t -> Uri.t -> (Response.t * string Pipe.Reader.t) Deferred.t
