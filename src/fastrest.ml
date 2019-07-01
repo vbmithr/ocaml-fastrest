@@ -64,9 +64,12 @@ type auth = {
 let auth ?(meta=[]) ~key ~secret () = { meta ; key ; secret }
 
 type params = (string * string list) list
+type json_params = J : 'a Json_encoding.encoding * 'a -> json_params
+let json_params enc v = J (enc, v)
+let json_of_params (J (enc, v)) = Json_encoding.construct enc v
 
 type auth_result = {
-  params : params ;
+  params : [`Form of params | `Json of json_params] ;
   headers : Headers.t ;
 }
 
@@ -74,8 +77,7 @@ type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;
   encoding : ('ok, 'error) result Json_encoding.encoding ;
-  params : params ;
-  json_of_params : (params -> Ezjsonm.t) option ;
+  params : [`Form of params | `Json of json_params] ;
   auth : ('meth, 'ok, 'error) authf option ;
 }
 
@@ -83,69 +85,61 @@ and ('meth, 'ok, 'error) authf =
   (('meth, 'ok, 'error) service -> auth -> auth_result)
 
 let get ?auth encoding url =
-  { meth = Get ; url ; encoding ; json_of_params = None ; params = [] ; auth }
+  { meth = Get ; url ; encoding ; params = `Form [] ; auth }
 
-let post_form ?auth ?(params=[]) encoding url =
-  { meth = PostForm ; url ; json_of_params = None ; encoding ; params ; auth }
+let post_form ?auth ~params encoding url =
+  { meth = PostForm ; url ; encoding ; params = `Form params; auth }
 
-let post_json ?auth ?(params=[]) ?json_of_params encoding url =
-  { meth = PostJson ; url ; json_of_params ; encoding ; params ; auth }
+let post_json ?auth ~params:(enc, v) encoding url =
+  { meth = PostJson ; url ; encoding ; params = `Json (json_params enc v); auth }
 
-let put_form ?auth ?(params=[]) encoding url =
-  { meth = PutForm ; url ; json_of_params = None ; encoding ; params ; auth }
+let put_form ?auth ~params encoding url =
+  { meth = PutForm ; url ; encoding ; params = `Form params; auth }
 
-let put_json ?auth ?(params=[]) ?json_of_params encoding url =
-  { meth = PutJson ; url ; json_of_params ; encoding ; params ; auth }
+let put_json ?auth ~params:(enc, v) encoding url =
+  { meth = PutJson ; url ; encoding ; params = `Json (json_params enc v); auth }
 
 let delete ?auth encoding url =
-  { meth = Delete ; url ; encoding ; json_of_params = None ; params = [] ; auth }
+  { meth = Delete ; url ; encoding ; params = `Form [] ; auth }
 
 let body_hdrs_of_service :
   type a. (a, 'ok, 'error) service -> (Headers.t * string) option = fun srv ->
-  let ezjsonm_of_params params =
-    let fields = List.map params ~f:begin fun (k, vs) ->
-        k, `String (String.concat vs)
-      end in
-    `O fields in
-  let json_of_params =
-    match srv.json_of_params with
-    | None -> ezjsonm_of_params
-    | Some f -> f in
-  match srv.meth with
-  | Get -> None
-  | Delete -> None
-  | PostForm ->
-    let str = Uri.encoded_of_query srv.params in
+  match srv.meth, srv.params with
+  | Get, _ -> None
+  | Delete, _ -> None
+  | PostForm, `Form params ->
+    let str = Uri.encoded_of_query params in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/x-www-form-urlencoded" ;
         "Content-Length", string_of_int (String.length str) ;
       ] in
     Some (hdrs, str)
-  | PutForm ->
-    let str = Uri.encoded_of_query srv.params in
+  | PutForm, `Form params ->
+    let str = Uri.encoded_of_query params in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/x-www-form-urlencoded" ;
         "Content-Length", string_of_int (String.length str) ;
       ] in
     Some (hdrs, str)
-  | PostJson ->
-    let str = Ezjsonm.to_string (json_of_params srv.params) in
+  | PostJson, `Json params ->
+    let str = Ezjsonm.value_to_string (json_of_params params) in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/json" ;
         "Content-Length", string_of_int (String.length str) ;
       ] in
     Some (hdrs, str)
-  | PutJson ->
-    let str = Ezjsonm.to_string (json_of_params srv.params) in
+  | PutJson, `Json params ->
+    let str = Ezjsonm.value_to_string (json_of_params params) in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/json" ;
         "Content-Length", string_of_int (String.length str) ;
       ] in
     Some (hdrs, str)
+  | _ -> invalid_arg "Invalid params for query type"
 
 let write_iovec w iovec =
   List.fold_left iovec ~init:0 ~f:begin fun a { Faraday.buffer ; off ; len } ->
@@ -214,15 +208,23 @@ let request (type meth) ?auth (service : (meth, 'ok, 'error) service) =
       { req with headers = Headers.(add_list req.headers (to_list headers)) },
       { service with params }
     | `GET, Some authf, Some auth ->
-      let params = Uri.query service.url in
+      let params = `Form (Uri.query service.url) in
       let { params ; headers } = authf { service with params } auth in
+      let params =
+        match params with
+        | `Json _ -> invalid_arg "unsupported json params for get"
+        | `Form params -> params in
       { req with
         headers = Headers.(add_list req.headers (to_list headers)) ;
         target = Uri.(path_and_query (with_query service.url params)) ;
       }, service
     | `DELETE, Some authf, Some auth ->
-      let params = Uri.query service.url in
+      let params = `Form (Uri.query service.url) in
       let { params ; headers } = authf { service with params } auth in
+      let params =
+        match params with
+        | `Json _ -> invalid_arg "unsupported json params for get"
+        | `Form params -> params in
       { req with
         headers = Headers.(add_list req.headers (to_list headers)) ;
         target = Uri.(path_and_query (with_query service.url params)) ;
