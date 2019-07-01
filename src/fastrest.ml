@@ -63,8 +63,10 @@ type auth = {
 
 let auth ?(meta=[]) ~key ~secret () = { meta ; key ; secret }
 
+type params = (string * string list) list
+
 type auth_result = {
-  params : (string * string list) list ;
+  params : params ;
   headers : Headers.t ;
 }
 
@@ -72,7 +74,8 @@ type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;
   encoding : ('ok, 'error) result Json_encoding.encoding ;
-  params : (string * string list) list ;
+  params : params ;
+  json_of_params : (params -> Ezjsonm.t) option ;
   auth : ('meth, 'ok, 'error) authf option ;
 }
 
@@ -80,22 +83,22 @@ and ('meth, 'ok, 'error) authf =
   (('meth, 'ok, 'error) service -> auth -> auth_result)
 
 let get ?auth encoding url =
-  { meth = Get ; url ; encoding ; params = [] ; auth }
+  { meth = Get ; url ; encoding ; json_of_params = None ; params = [] ; auth }
 
 let post_form ?auth ?(params=[]) encoding url =
-  { meth = PostForm ; url ; encoding ; params ; auth }
+  { meth = PostForm ; url ; json_of_params = None ; encoding ; params ; auth }
 
-let post_json ?auth ?(params=[]) encoding url =
-  { meth = PostJson ; url ; encoding ; params ; auth }
+let post_json ?auth ?(params=[]) ?json_of_params encoding url =
+  { meth = PostJson ; url ; json_of_params ; encoding ; params ; auth }
 
 let put_form ?auth ?(params=[]) encoding url =
-  { meth = PutForm ; url ; encoding ; params ; auth }
+  { meth = PutForm ; url ; json_of_params = None ; encoding ; params ; auth }
 
-let put_json ?auth ?(params=[]) encoding url =
-  { meth = PutJson ; url ; encoding ; params ; auth }
+let put_json ?auth ?(params=[]) ?json_of_params encoding url =
+  { meth = PutJson ; url ; json_of_params ; encoding ; params ; auth }
 
 let delete ?auth encoding url =
-  { meth = Delete ; url ; encoding ; params = [] ; auth }
+  { meth = Delete ; url ; encoding ; json_of_params = None ; params = [] ; auth }
 
 let body_hdrs_of_service :
   type a. (a, 'ok, 'error) service -> (Headers.t * string) option = fun srv ->
@@ -104,6 +107,10 @@ let body_hdrs_of_service :
         k, `String (String.concat vs)
       end in
     `O fields in
+  let json_of_params =
+    match srv.json_of_params with
+    | None -> ezjsonm_of_params
+    | Some f -> f in
   match srv.meth with
   | Get -> None
   | Delete -> None
@@ -124,7 +131,7 @@ let body_hdrs_of_service :
       ] in
     Some (hdrs, str)
   | PostJson ->
-    let str = Ezjsonm.to_string (ezjsonm_of_params srv.params) in
+    let str = Ezjsonm.to_string (json_of_params srv.params) in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/json" ;
@@ -132,7 +139,7 @@ let body_hdrs_of_service :
       ] in
     Some (hdrs, str)
   | PutJson ->
-    let str = Ezjsonm.to_string (ezjsonm_of_params srv.params) in
+    let str = Ezjsonm.to_string (json_of_params srv.params) in
     let hdrs =
       Headers.of_list [
         "Content-Type", "application/json" ;

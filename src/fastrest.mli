@@ -16,8 +16,10 @@ val auth :
   ?meta:(string * string) list ->
   key:string -> secret:string -> unit -> auth
 
+type params = (string * string list) list
+
 type auth_result = {
-  params : (string * string list) list ;
+  params : params ;
   headers : Headers.t ;
 }
 
@@ -47,7 +49,8 @@ type ('meth, 'ok, 'error) service = {
   meth : 'meth meth ;
   url : Uri.t ;
   encoding : ('ok, 'error) result Json_encoding.encoding ;
-  params : (string * string list) list ;
+  params : params ;
+  json_of_params : (params -> Ezjsonm.t) option ;
   auth : ('meth, 'ok, 'error) authf option ;
 }
 
@@ -64,25 +67,27 @@ val get :
 
 val post_form :
   ?auth:(post_form, 'ok, 'error) authf ->
-  ?params:(string * string list) list ->
+  ?params:params ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (post_form, 'ok, 'error) service
 
 val post_json :
   ?auth:(post_json, 'ok, 'error) authf ->
-  ?params:(string * string list) list ->
+  ?params:params ->
+  ?json_of_params:(params -> Ezjsonm.t) ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (post_json, 'ok, 'error) service
 
 val put_form :
   ?auth:(put_form, 'ok, 'error) authf ->
-  ?params:(string * string list) list ->
+  ?params:params ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (put_form, 'ok, 'error) service
 
 val put_json :
   ?auth:(put_json, 'ok, 'error) authf ->
-  ?params:(string * string list) list ->
+  ?params:params ->
+  ?json_of_params:(params -> Ezjsonm.t) ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
   (put_json, 'ok, 'error) service
 
