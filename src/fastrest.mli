@@ -16,30 +16,6 @@ val auth :
   ?meta:(string * string) list ->
   key:string -> secret:string -> unit -> auth
 
-type params = (string * string list) list
-type json_params
-val json_params : 'a Json_encoding.encoding -> 'a -> json_params
-
-type auth_result = {
-  params : [`Form of params | `Json of json_params] ;
-  headers : Headers.t ;
-}
-
-type get
-type post_form
-type post_json
-type put_form
-type put_json
-type delete
-
-type _ meth =
-  | Get : get meth
-  | PostForm : post_form meth
-  | PostJson : post_json meth
-  | PutForm : put_form meth
-  | PutJson : put_json meth
-  | Delete : delete meth
-
 type 'a error =
   | Http of Client_connection.error
   | App of 'a
@@ -47,57 +23,68 @@ type 'a error =
 val pp_print_error :
   (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a error -> unit
 
-type ('meth, 'ok, 'error) service = {
-  meth : 'meth meth ;
-  url : Uri.t ;
-  encoding : ('ok, 'error) result Json_encoding.encoding ;
-  params : [`Form of params | `Json of json_params] ;
-  auth : ('meth, 'ok, 'error) authf option ;
+type form
+type json
+type _ params =
+  | Form : (string * string list) list -> form params
+  | Json : 'a Json_encoding.encoding * 'a -> json params
+
+type 'a auth_result = {
+  params : 'a params ;
+  headers : Headers.t ;
 }
 
-and ('meth, 'ok, 'error) authf =
-  (('meth, 'ok, 'error) service -> auth -> auth_result)
+type ('params, 'ok, 'error) service = {
+  meth : Method.t ;
+  url : Uri.t ;
+  encoding : ('ok, 'error) result Json_encoding.encoding ;
+  params : 'params params ;
+  auth : ('params, 'ok, 'error) authf option ;
+}
+
+and ('params, 'ok, 'error) authf =
+  (('params, 'ok, 'error) service -> auth -> 'params auth_result)
 
 val body_hdrs_of_service :
-  ('meth, 'ok, 'error) service -> (Headers.t * string) option
+  ('params, 'ok, 'error) service -> (Headers.t * string) option
 
 val get :
-  ?auth:(get, 'ok, 'error) authf ->
+  ?auth:(form, 'ok, 'error) authf ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (get, 'ok, 'error) service
-
-val post_form :
-  ?auth:(post_form, 'ok, 'error) authf ->
-  params:params ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (post_form, 'ok, 'error) service
-
-val post_json :
-  ?auth:(post_json, 'ok, 'error) authf ->
-  params:'a Json_encoding.encoding * 'a ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (post_json, 'ok, 'error) service
-
-val put_form :
-  ?auth:(put_form, 'ok, 'error) authf ->
-  params:params ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (put_form, 'ok, 'error) service
-
-val put_json :
-  ?auth:(put_json, 'ok, 'error) authf ->
-  params:'a Json_encoding.encoding * 'a ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (put_json, 'ok, 'error) service
+  (form, 'ok, 'error) service
 
 val delete :
-  ?auth:(delete, 'ok, 'error) authf ->
+  ?auth:(form, 'ok, 'error) authf ->
   ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (delete, 'ok, 'error) service
+  (form, 'ok, 'error) service
+
+val post_form :
+  ?auth:(form, 'ok, 'error) authf ->
+  ?params:(string * string list) list ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (form, 'ok, 'error) service
+
+val post_json :
+  ?auth:(json, 'ok, 'error) authf ->
+  params:'a Json_encoding.encoding * 'a ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (json, 'ok, 'error) service
+
+val put_form :
+  ?auth:(form, 'ok, 'error) authf ->
+  ?params:(string * string list) list ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (form, 'ok, 'error) service
+
+val put_json :
+  ?auth:(json, 'ok, 'error) authf ->
+  params:'a Json_encoding.encoding * 'a ->
+  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
+  (json, 'ok, 'error) service
 
 val request :
   ?auth:auth ->
-  ('meth, 'ok, 'error) service ->
+  ('params, 'ok, 'error) service ->
   ('ok, 'error error) result Deferred.t
 
 val simple_call :
