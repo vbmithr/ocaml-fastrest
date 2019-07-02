@@ -84,23 +84,26 @@ let put_json ?auth ~params:(enc, v) encoding url =
 
 let body_hdrs_of_service :
   type a. (a, 'ok, 'error) service -> (Headers.t * string) option = fun srv ->
-  match srv.params with
-  | Form params ->
-    let str = Uri.encoded_of_query params in
-    let hdrs =
-      Headers.of_list [
-        "Content-Type", "application/x-www-form-urlencoded" ;
-        "Content-Length", string_of_int (String.length str) ;
-      ] in
-    Some (hdrs, str)
-  | Json (e, a) ->
-    let str = Ezjsonm.value_to_string (json_of_params e a) in
-    let hdrs =
-      Headers.of_list [
-        "Content-Type", "application/json" ;
-        "Content-Length", string_of_int (String.length str) ;
-      ] in
-    Some (hdrs, str)
+  match srv.meth with
+  | `POST | `PUT -> begin
+      match srv.params with
+      | Form params ->
+        let str = Uri.encoded_of_query params in
+        let hdrs =
+          Headers.of_list [
+            "Content-Type", "application/x-www-form-urlencoded" ;
+            "Content-Length", string_of_int (String.length str) ;
+          ] in
+        Some (hdrs, str)
+      | Json (e, a) ->
+        let str = Ezjsonm.value_to_string (json_of_params e a) in
+        let hdrs =
+          Headers.of_list [
+            "Content-Type", "application/json" ;
+            "Content-Length", string_of_int (String.length str) ;
+          ] in
+        Some (hdrs, str) end
+  | #Method.t -> None
 
 let write_iovec w iovec =
   List.fold_left iovec ~init:0 ~f:begin fun a { Faraday.buffer ; off ; len } ->
