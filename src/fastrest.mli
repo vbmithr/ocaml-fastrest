@@ -83,6 +83,8 @@ val put_json :
   (json, 'ok, 'error) service
 
 val request :
+  ?version:Async_ssl.Version.t ->
+  ?options:Async_ssl.Opt.t list ->
   ?auth:auth ->
   ('params, 'ok, 'error) service ->
   ('ok, 'error error) result Deferred.t

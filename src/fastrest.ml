@@ -138,9 +138,13 @@ let read_response conn r =
     end
 
 let request :
-  type params. ?auth:auth ->
+  type params.
+  ?version:Async_ssl.Version.t ->
+  ?options:Async_ssl.Opt.t list ->
+  ?auth:auth ->
   (params, 'ok, 'error) service ->
-  ('ok, 'error error) result Deferred.t = fun ?auth service ->
+  ('ok, 'error error) result Deferred.t =
+  fun ?version ?options ?auth service ->
   let error_iv = Ivar.create () in
   let resp_iv = Ivar.create () in
   let error_handler err =
@@ -197,7 +201,7 @@ let request :
       Headers.(add_list headers (to_list hdrs)), Some params_str in
   let req = { req with headers } in
   Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
-  Async_uri.with_connection service.url begin fun _sock _conn r w ->
+  Async_uri.with_connection ?version ?options service.url begin fun _sock _conn r w ->
     let body, conn =
       Client_connection.request req ~error_handler ~response_handler in
     begin
