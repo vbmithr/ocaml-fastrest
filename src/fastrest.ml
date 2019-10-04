@@ -16,21 +16,16 @@ let src = Logs.Src.create "fastrest"
 module Log = (val Logs.src_log src : Logs.LOG)
 module Log_async = (val Logs_async.src_log src : Logs_async.LOG)
 
-type 'a error =
-  | Http of Client_connection.error
-  | App of 'a
-
-let pp_cc_error ppf = function
-  | `Exn e ->
-    Format.fprintf ppf "Exn %a" Exn.pp e
-  | `Invalid_response_body_length r ->
-    Format.fprintf ppf "Invalid_response_body_length %a" Response.pp_hum r
-  | `Malformed_response s ->
-    Format.fprintf ppf "Malformed_response %s" s
-
-let pp_print_error pp_error ppf = function
-  | Http e -> Format.fprintf ppf "Http %a" pp_cc_error e
-  | App e -> Format.fprintf ppf "App %a" pp_error e
+module Client_connection = struct
+  include Client_connection
+  let pp_error ppf = function
+    | `Exn e ->
+      Format.fprintf ppf "Exn %a" Exn.pp e
+    | `Invalid_response_body_length r ->
+      Format.fprintf ppf "Invalid_response_body_length %a" Response.pp_hum r
+    | `Malformed_response s ->
+      Format.fprintf ppf "Malformed_response %s" s
+end
 
 type auth = {
   key : string ;
@@ -53,16 +48,16 @@ type 'a auth_result = {
   headers : Headers.t ;
 }
 
-type ('params, 'ok, 'error) service = {
+type ('params, 'a) service = {
   meth : Method.t ;
   url : Uri.t ;
-  encoding : ('ok, 'error) result Json_encoding.encoding ;
+  encoding : ('a, Error.t) result Json_encoding.encoding ;
   params : 'params params ;
-  auth : ('params, 'ok, 'error) authf option ;
+  auth : ('params, 'a) authf option ;
 }
 
-and ('params, 'ok, 'error) authf =
-  (('params, 'ok, 'error) service -> auth -> 'params auth_result)
+and ('params, 'a) authf =
+  (('params, 'a) service -> auth -> 'params auth_result)
 
 let get ?auth encoding url =
   { meth = `GET ; url ; encoding ; params = Form (Uri.query url) ; auth }
@@ -83,7 +78,7 @@ let put_json ?auth ~params:(enc, v) encoding url =
   { meth = `PUT ; url ; encoding ; params = Json (enc, v); auth }
 
 let body_hdrs_of_service :
-  type a. (a, 'ok, 'error) service -> (Headers.t * string) option = fun srv ->
+  type a. (a, 'b) service -> (Headers.t * string) option = fun srv ->
   match srv.meth with
   | `POST | `PUT -> begin
       match srv.params with
@@ -142,13 +137,15 @@ let request :
   ?version:Async_ssl.Version.t ->
   ?options:Async_ssl.Opt.t list ->
   ?auth:auth ->
-  (params, 'ok, 'error) service ->
-  ('ok, 'error error) result Deferred.t =
+  (params, 'a) service ->
+  'a Deferred.Or_error.t =
   fun ?version ?options ?auth service ->
   let error_iv = Ivar.create () in
   let resp_iv = Ivar.create () in
   let error_handler err =
-    Ivar.fill error_iv (Error (Http err))
+    Ivar.fill error_iv
+      (Or_error.error_string
+         (Format.asprintf "%a" Client_connection.pp_error err))
   in
   let response_handler response body =
     Log.debug (fun m -> m "%a" Response.pp_hum response) ;
@@ -159,7 +156,7 @@ let request :
       let resp_json = Ezjsonm.from_string buf_str in
       match Ezjsonm_encoding.destruct_safe
               service.encoding resp_json with
-      | Error e -> Ivar.fill error_iv (Error (App e))
+      | Error e -> Ivar.fill error_iv (Error e)
       | Ok v -> Ivar.fill resp_iv (Ok v)
     in
     let rec on_read buf ~off ~len =

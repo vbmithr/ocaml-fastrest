@@ -1,3 +1,4 @@
+open Core
 open Async
 open Httpaf
 
@@ -16,13 +17,6 @@ val auth :
   ?meta:(string * string) list ->
   key:string -> secret:string -> unit -> auth
 
-type 'a error =
-  | Http of Client_connection.error
-  | App of 'a
-
-val pp_print_error :
-  (Format.formatter -> 'a -> unit) -> Format.formatter -> 'a error -> unit
-
 type form
 type json
 type _ params =
@@ -34,62 +28,62 @@ type 'a auth_result = {
   headers : Headers.t ;
 }
 
-type ('params, 'ok, 'error) service = {
+type ('params, 'a) service = {
   meth : Method.t ;
   url : Uri.t ;
-  encoding : ('ok, 'error) result Json_encoding.encoding ;
+  encoding : ('a, Error.t) result Json_encoding.encoding ;
   params : 'params params ;
-  auth : ('params, 'ok, 'error) authf option ;
+  auth : ('params, 'a) authf option ;
 }
 
-and ('params, 'ok, 'error) authf =
-  (('params, 'ok, 'error) service -> auth -> 'params auth_result)
+and ('params, 'a) authf =
+  (('params, 'a) service -> auth -> 'params auth_result)
 
-val body_hdrs_of_service :
-  ('params, 'ok, 'error) service -> (Headers.t * string) option
+val body_hdrs_of_service : (_, _) service -> (Headers.t * string) option
 
 val get :
-  ?auth:(form, 'ok, 'error) authf ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (form, 'ok, 'error) service
+  ?auth:(form, 'a) authf ->
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (form, 'a) service
 
 val delete :
-  ?auth:(form, 'ok, 'error) authf ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (form, 'ok, 'error) service
+  ?auth:(form, 'a) authf ->
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (form, 'a) service
 
 val post_form :
-  ?auth:(form, 'ok, 'error) authf ->
+  ?auth:(form, 'a) authf ->
   ?params:(string * string list) list ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (form, 'ok, 'error) service
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (form, 'a) service
 
 val post_json :
-  ?auth:(json, 'ok, 'error) authf ->
+  ?auth:(json, 'a) authf ->
   params:'a Json_encoding.encoding * 'a ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (json, 'ok, 'error) service
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (json, 'a) service
 
 val put_form :
-  ?auth:(form, 'ok, 'error) authf ->
+  ?auth:(form, 'a) authf ->
   ?params:(string * string list) list ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (form, 'ok, 'error) service
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (form, 'a) service
 
 val put_json :
-  ?auth:(json, 'ok, 'error) authf ->
+  ?auth:(json, 'a) authf ->
   params:'a Json_encoding.encoding * 'a ->
-  ('ok, 'error) result Json_encoding.encoding -> Uri.t ->
-  (json, 'ok, 'error) service
+  ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
+  (json, 'a) service
 
 val request :
   ?version:Async_ssl.Version.t ->
   ?options:Async_ssl.Opt.t list ->
   ?auth:auth ->
-  ('params, 'ok, 'error) service ->
-  ('ok, 'error error) result Deferred.t
+  ('params, 'a) service ->
+  'a Deferred.Or_error.t
 
 val simple_call :
   ?headers:Headers.t ->
   ?body:string ->
-  meth:Method.t -> Uri.t -> (Response.t * string Pipe.Reader.t) Deferred.t
+  meth:Method.t -> Uri.t ->
+  (Response.t * string Pipe.Reader.t) Deferred.t
