@@ -107,65 +107,73 @@ let write_iovec w iovec =
   end
 
 let rec flush_req conn w =
-  match Client_connection.next_write_operation conn with
+  let open Client_connection in
+  match next_write_operation conn with
   | `Write iovec ->
     let nb_read = write_iovec w iovec in
-    Client_connection.report_write_result conn (`Ok nb_read) ;
+    report_write_result conn (`Ok nb_read) ;
     flush_req conn w
   | `Yield ->
-    Client_connection.yield_writer conn (fun () -> flush_req conn w) ;
+    yield_writer conn (fun () -> flush_req conn w) ;
   | `Close _ -> ()
 
 let read_response conn r =
+  let open Client_connection in
   Log_async.debug (fun m -> m "read_response") >>= fun () ->
-  match Client_connection.next_read_operation conn with
+  match next_read_operation conn with
   | `Close -> Deferred.unit
   | `Read -> begin
       Reader.read_one_chunk_at_a_time r
         ~handle_chunk:begin fun buf ~pos ~len ->
-          let nb_read = Client_connection.read conn buf ~off:pos ~len in
+          let nb_read = read conn buf ~off:pos ~len in
           return (`Consumed (nb_read, `Need_unknown))
         end >>= function
       | `Stopped () -> assert false (* cannot happen *)
-      | `Eof -> Deferred.unit (* normal case *)
-      | `Eof_with_unconsumed_data _ ->
-        Log_async.err (fun m -> m "Got EOF with unconsumed data")
+      | `Eof ->
+        let _nb_read = read_eof conn (Bigstring.of_string "")
+            ~off:0 ~len:0 in
+        Deferred.unit
+      | `Eof_with_unconsumed_data buf ->
+        let _nb_read = read_eof conn (Bigstring.of_string buf)
+            ~off:0 ~len:(String.length buf) in
+        Deferred.unit
     end
+
+let error_handler error_iv err =
+  Ivar.fill error_iv
+    (Or_error.error_string
+       (Format.asprintf "%a" Client_connection.pp_error err))
+
+let response_handler service error_iv resp_iv response body =
+  Log.debug (fun m -> m "%a" Response.pp_hum response) ;
+  let buffer = Bigbuffer.create 32 in
+  let on_eof () =
+    let buf_str = Bigbuffer.contents buffer in
+    Log.debug (fun m -> m "%s" buf_str) ;
+    let resp_json = Ezjsonm.from_string buf_str in
+    match Ezjsonm_encoding.destruct_safe
+            service.encoding resp_json with
+    | Error e -> Ivar.fill error_iv (Error e)
+    | Ok v -> Ivar.fill resp_iv (Ok v)
+  in
+  let rec on_read buf ~off ~len =
+    let str = Bigstringaf.sub buf ~off ~len in
+    Bigbuffer.add_bigstring buffer str ;
+    Body.schedule_read body ~on_eof ~on_read
+  in
+  Body.schedule_read body ~on_eof ~on_read
 
 let request :
   type params.
+  ?config:Config.t ->
   ?version:Async_ssl.Version.t ->
   ?options:Async_ssl.Opt.t list ->
   ?auth:auth ->
   (params, 'a) service ->
   'a Deferred.Or_error.t =
-  fun ?version ?options ?auth service ->
+  fun ?config ?version ?options ?auth service ->
   let error_iv = Ivar.create () in
   let resp_iv = Ivar.create () in
-  let error_handler err =
-    Ivar.fill error_iv
-      (Or_error.error_string
-         (Format.asprintf "%a" Client_connection.pp_error err))
-  in
-  let response_handler response body =
-    Log.debug (fun m -> m "%a" Response.pp_hum response) ;
-    let buffer = Bigbuffer.create 32 in
-    let on_eof () =
-      let buf_str = Bigbuffer.contents buffer in
-      Log.debug (fun m -> m "%s" buf_str) ;
-      let resp_json = Ezjsonm.from_string buf_str in
-      match Ezjsonm_encoding.destruct_safe
-              service.encoding resp_json with
-      | Error e -> Ivar.fill error_iv (Error e)
-      | Ok v -> Ivar.fill resp_iv (Ok v)
-    in
-    let rec on_read buf ~off ~len =
-      let str = Bigstringaf.sub buf ~off ~len in
-      Bigbuffer.add_bigstring buffer str ;
-      Body.schedule_read body ~on_eof ~on_read
-    in
-    Body.schedule_read body ~on_eof ~on_read
-  in
   let req = Request.create service.meth (Uri.path_and_query service.url) in
   let req, service = match req.meth, service.auth, auth with
     | _, _, None -> req, service
@@ -200,7 +208,9 @@ let request :
   Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
   Async_uri.with_connection ?version ?options service.url begin fun _sock _conn r w ->
     let body, conn =
-      Client_connection.request req ~error_handler ~response_handler in
+      Client_connection.request ?config req
+        ~error_handler:(error_handler error_iv)
+        ~response_handler:(response_handler service resp_iv error_iv) in
     begin
       match params_str with
       | Some ps ->
@@ -210,8 +220,7 @@ let request :
     end ;
     flush_req conn w ;
     don't_wait_for (read_response conn r) ;
-    Deferred.any [Ivar.read resp_iv ;
-                  Ivar.read error_iv]
+    Deferred.any Ivar.[read resp_iv ; read error_iv]
   end
 
 let error_handler = function
@@ -222,7 +231,7 @@ let error_handler = function
   | `Malformed_response r ->
     Log.err (fun m -> m "Malformed response %s" r)
 
-let simple_call ?(headers=Headers.empty) ?body ~meth url =
+let simple_call ?config ?(headers=Headers.empty) ?body ~meth url =
   let resp_iv = Ivar.create () in
   let pr, pw = Pipe.create () in
   let response_handler response body =
@@ -246,7 +255,7 @@ let simple_call ?(headers=Headers.empty) ?body ~meth url =
   Async_uri.connect url >>= fun (_sock, _conn, r, w) ->
   let req = Request.create ~headers meth (Uri.path_and_query url) in
   let body_writer, conn =
-    Client_connection.request req ~error_handler ~response_handler in
+    Client_connection.request ?config req ~error_handler ~response_handler in
   Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
   begin
     match body with

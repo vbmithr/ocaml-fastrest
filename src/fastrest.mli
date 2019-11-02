@@ -76,6 +76,7 @@ val put_json :
   (json, 'a) service
 
 val request :
+  ?config:Config.t ->
   ?version:Async_ssl.Version.t ->
   ?options:Async_ssl.Opt.t list ->
   ?auth:auth ->
@@ -83,6 +84,7 @@ val request :
   'a Deferred.Or_error.t
 
 val simple_call :
+  ?config:Config.t ->
   ?headers:Headers.t ->
   ?body:string ->
   meth:Method.t -> Uri.t ->
