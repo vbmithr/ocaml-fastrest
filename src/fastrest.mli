@@ -89,3 +89,17 @@ val simple_call :
   ?body:string ->
   meth:Method.t -> Uri.t ->
   (Response.t * string Pipe.Reader.t) Deferred.t
+
+val simple_call_string :
+  ?version:Async_ssl.Version.t ->
+  ?options:Async_ssl.Opt.t sexp_list ->
+  ?buffer_age_limit:[ `At_most of Time.Span.t | `Unlimited ] ->
+  ?interrupt:unit Deferred.t ->
+  ?reader_buffer_size:int ->
+  ?writer_buffer_size:int ->
+  ?timeout:Time.Span.t ->
+  ?config:Config.t ->
+  ?headers:Headers.t ->
+  ?body:string ->
+  meth:Method.t -> Uri.t ->
+  (Response.t * string) Deferred.t
