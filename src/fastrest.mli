@@ -76,14 +76,27 @@ val put_json :
   (json, 'a) service
 
 val request :
-  ?config:Config.t ->
   ?version:Async_ssl.Version.t ->
   ?options:Async_ssl.Opt.t list ->
+  ?buffer_age_limit:[ `At_most of Time.Span.t | `Unlimited ] ->
+  ?interrupt:unit Deferred.t ->
+  ?reader_buffer_size:int ->
+  ?writer_buffer_size:int ->
+  ?timeout:Time.Span.t ->
+  ?config:Config.t ->
   ?auth:auth ->
   ('params, 'a) service ->
   'a Deferred.Or_error.t
 
 val simple_call :
+  ?version:Async_ssl.Version.t ->
+  ?options:Async_ssl.Opt.t sexp_list ->
+  ?socket:([ `Unconnected ], Socket.Address.Inet.t) Socket.t ->
+  ?buffer_age_limit:[ `At_most of Time.Span.t | `Unlimited ] ->
+  ?interrupt:unit Deferred.t ->
+  ?reader_buffer_size:int ->
+  ?writer_buffer_size:int ->
+  ?timeout:Time.Span.t ->
   ?config:Config.t ->
   ?headers:Headers.t ->
   ?body:string ->

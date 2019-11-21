@@ -19,9 +19,13 @@ let wrap_request_light
     Deferred.Or_error.ok_exn
   end
 
-let dummy_service =
+let symbols =
   Fastrest.get Json_encoding.(conv (fun _ -> assert false) (fun _ -> Ok ()) unit)
     (Uri.of_string "https://api.bitfinex.com/v1/symbols")
+
+let tickers =
+  Fastrest.get Json_encoding.(conv (fun _ -> assert false) (fun _ -> Ok ()) unit)
+    (Uri.of_string "https://api-pub.bitfinex.com/v2/tickers?symbols=ALL")
 
 let basic = [
   wrap_request_light "simple" begin fun () ->
@@ -29,7 +33,8 @@ let basic = [
       (Uri.make ~scheme:"http" ~host:"www.google.com" ()) >>= fun _ ->
     Deferred.Or_error.return ()
   end ;
-  (* wrap_request "dummy_service" dummy_service *)
+  wrap_request "bfx_symbols" symbols ;
+  wrap_request "bfx_tickers" tickers ;
 ]
 
 let () =
