@@ -107,34 +107,27 @@ let write_iovec w iovec =
   end
 
 let rec flush_req conn w =
-  let open Client_connection in
-  match next_write_operation conn with
+  match Client_connection.next_write_operation conn with
   | `Write iovec ->
     let nb_read = write_iovec w iovec in
-    report_write_result conn (`Ok nb_read) ;
+    Client_connection.report_write_result conn (`Ok nb_read) ;
     flush_req conn w
   | `Yield ->
-    yield_writer conn (fun () -> flush_req conn w) ;
+    Client_connection.yield_writer conn (fun () -> flush_req conn w) ;
   | `Close _ -> ()
 
-let read_response conn r =
-  let open Client_connection in
-  Log_async.debug (fun m -> m "read_response") >>= fun () ->
-  match next_read_operation conn with
+let rec read_response conn r =
+  match Client_connection.next_read_operation conn with
   | `Close -> Deferred.unit
   | `Read -> begin
-      Reader.read_one_chunk_at_a_time r
-        ~handle_chunk:begin fun buf ~pos ~len ->
-          let nb_read = read conn buf ~off:pos ~len in
-          return (`Consumed (nb_read, `Need_unknown))
-        end >>= function
-      | `Stopped () -> assert false (* cannot happen *)
-      | `Eof ->
-        let _nb_read = read_eof conn (Bigstring.of_string "")
-            ~off:0 ~len:0 in
-        Deferred.unit
+      Reader.read_one_chunk_at_a_time r ~handle_chunk:begin fun buf ~pos ~len ->
+        let nb_read = Client_connection.read conn buf ~off:pos ~len in
+        return (`Stop_consumed ((), nb_read))
+      end >>= function
+      | `Eof -> Deferred.unit
+      | `Stopped () -> read_response conn r
       | `Eof_with_unconsumed_data buf ->
-        let _nb_read = read_eof conn (Bigstring.of_string buf)
+        let _nb_read = Client_connection.read_eof conn (Bigstring.of_string buf)
             ~off:0 ~len:(String.length buf) in
         Deferred.unit
     end
@@ -142,27 +135,19 @@ let read_response conn r =
 let read_body body =
   let buf = Bigbuffer.create 512 in
   let read_done = Ivar.create () in
-  Body.schedule_read body ~on_eof:(Ivar.fill read_done)
-    ~on_read:begin fun b ~off:pos ~len ->
-      Bigbuffer.add_bigstring buf (Bigstring.sub_shared b ~pos ~len)
-    end ;
+  Body.schedule_read body ~on_eof:begin fun () ->
+    Ivar.fill read_done ()
+  end ~on_read:begin fun b ~off:pos ~len ->
+    Log.debug (fun m -> m "READ_BODY %d" len) ;
+    Bigbuffer.add_bigstring buf (Bigstring.sub_shared b ~pos ~len)
+  end ;
   Ivar.read read_done >>| fun () ->
-  Body.close_reader body ;
   Bigbuffer.contents buf
 
 let error_handler error_iv err =
   Ivar.fill error_iv
     (Or_error.error_string
        (Format.asprintf "%a" Client_connection.pp_error err))
-
-let response_handler service error_iv resp_iv response body =
-  Log.debug (fun m -> m "%a" Response.pp_hum response) ;
-  read_body body >>> fun buf_str ->
-  Log.debug (fun m -> m "%s" buf_str) ;
-  let resp_json = Ezjsonm.from_string buf_str in
-  match Ezjsonm_encoding.destruct_safe service.encoding resp_json with
-  | Error e -> Ivar.fill error_iv (Error e)
-  | Ok v -> Ivar.fill resp_iv (Ok v)
 
 let request :
   type params.
@@ -173,8 +158,18 @@ let request :
   (params, 'a) service ->
   'a Deferred.Or_error.t =
   fun ?config ?version ?options ?auth service ->
-  let error_iv = Ivar.create () in
   let resp_iv = Ivar.create () in
+  let error_iv = Ivar.create () in
+
+  let response_handler service error_iv resp_iv response body =
+    Log.debug (fun m -> m "%a" Response.pp_hum response) ;
+    read_body body >>> fun buf_str ->
+    Log.debug (fun m -> m "BODY %s (%d chars)" buf_str (String.length buf_str)) ;
+    let resp_json = Ezjsonm.from_string buf_str in
+    match Ezjsonm_encoding.destruct_safe service.encoding resp_json with
+    | Error e -> Ivar.fill error_iv (Error e)
+    | Ok v -> Ivar.fill resp_iv (Ok v) in
+
   let req = Request.create service.meth (Uri.path_and_query service.url) in
   let req, service = match req.meth, service.auth, auth with
     | _, _, None -> req, service
@@ -277,10 +272,12 @@ let simple_call_string
     ?version ?options ?buffer_age_limit ?interrupt
     ?reader_buffer_size ?writer_buffer_size ?timeout
     ?config ?(headers=Headers.empty) ?body ~meth url =
+  let read_response_finished = Ivar.create () in
   let resp_iv = Ivar.create () in
   let response_handler response body =
     Log.debug (fun m -> m "%a" Response.pp_hum response) ;
     read_body body >>> fun body ->
+    Log.debug (fun m -> m "BODY %s (%d chars)" body (String.length body)) ;
     Ivar.fill resp_iv (response, body) in
   let headers = Headers.add_list headers [
       "Host", Uri.host_with_default ~default:"" url ;
@@ -305,6 +302,6 @@ let simple_call_string
     end ;
     Body.close_writer body_writer ;
     flush_req conn w ;
-    don't_wait_for (read_response conn r) ;
-    Ivar.read resp_iv
-  end
+    read_response conn r >>| Ivar.fill read_response_finished
+  end >>= fun () ->
+  Ivar.read resp_iv
