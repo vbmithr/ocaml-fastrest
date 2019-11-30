@@ -59,7 +59,7 @@ val post_form :
 
 val post_json :
   ?auth:(json, 'a) authf ->
-  params:'a Json_encoding.encoding * 'a ->
+  params:'b Json_encoding.encoding * 'b ->
   ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
   (json, 'a) service
 
@@ -71,7 +71,7 @@ val put_form :
 
 val put_json :
   ?auth:(json, 'a) authf ->
-  params:'a Json_encoding.encoding * 'a ->
+  params:'b Json_encoding.encoding * 'b ->
   ('a, Error.t) result Json_encoding.encoding -> Uri.t ->
   (json, 'a) service
 
