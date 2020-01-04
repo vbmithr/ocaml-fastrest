@@ -86,7 +86,7 @@ val request :
   ?config:Config.t ->
   ?auth:auth ->
   ('params, 'a) service ->
-  'a Deferred.Or_error.t
+  'a Deferred.t
 
 val simple_call :
   ?version:Async_ssl.Version.t ->

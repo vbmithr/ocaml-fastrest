@@ -146,7 +146,7 @@ let read_body ?(bufsize=512) body =
 
 let error_handler error_iv err =
   Ivar.fill error_iv
-    (Or_error.error_string
+    (Error.of_string
        (Format.asprintf "%a" Client_connection.pp_error err))
 
 let request :
@@ -160,74 +160,76 @@ let request :
   ?timeout:Time.Span.t ->
   ?config:Config.t ->
   ?auth:auth ->
-  (params, 'a) service ->
-  'a Deferred.Or_error.t =
+  (params, 'a) service -> 'a Deferred.t =
   fun ?version ?options ?buffer_age_limit ?interrupt
     ?reader_buffer_size ?writer_buffer_size ?timeout ?config ?auth service ->
-  let resp_iv = Ivar.create () in
-  let error_iv = Ivar.create () in
+    let resp_iv = Ivar.create () in
+    let error_iv = Ivar.create () in
 
-  let response_handler service error_iv resp_iv response body =
-    Log.debug (fun m -> m "%a" Response.pp_hum response) ;
-    read_body body >>> fun buf_str ->
-    Log.debug (fun m -> m ">>> %s" buf_str) ;
-    let resp_json = Ezjsonm.from_string buf_str in
-    match Ezjsonm_encoding.destruct_safe service.encoding resp_json with
-    | Error e -> Ivar.fill error_iv (Error e)
-    | Ok v -> Ivar.fill resp_iv (Ok v) in
+    let response_handler service ~error_iv ~resp_iv response body =
+      Log.debug (fun m -> m "%a" Response.pp_hum response) ;
+      read_body body >>> fun buf_str ->
+      Log.debug (fun m -> m ">>> %s" buf_str) ;
+      let resp_json = Ezjsonm.from_string buf_str in
+      match Ezjsonm_encoding.destruct_safe service.encoding resp_json with
+      | Error e -> Ivar.fill error_iv e
+      | Ok v -> Ivar.fill resp_iv v in
 
-  let req = Request.create service.meth (Uri.path_and_query service.url) in
-  let req, service = match req.meth, service.auth, auth with
-    | _, _, None -> req, service
-    | _, None, _ -> req, service
-    | `PUT, Some authf, Some auth
-    | `POST, Some authf, Some auth ->
-      let { params ; headers } = authf service auth in
-      { req with headers = Headers.(add_list req.headers (to_list headers)) },
-      { service with params }
-    | `DELETE, Some authf, Some auth
-    | `GET, Some authf, Some auth ->
-      let { params ; headers } = authf service auth in
-      let ps = match params with
-        | Form ps -> ps
-        | _ -> assert false in
-      { req with
-        headers = Headers.(add_list req.headers (to_list headers)) ;
-        target = Uri.(path_and_query (with_query service.url ps)) ;
-      }, service
-    | _ -> invalid_arg "unsupported method"
-  in
-  let headers = Headers.add_list req.headers [
-      "User-Agent", "ocaml-fastrest" ;
-      "Host", Uri.host_with_default ~default:"" service.url ;
-      "Connection", "close" ;
-    ] in
-  let headers, params_str =
-    match body_hdrs_of_service service with
-    | None -> headers, None
-    | Some (hdrs, params_str) ->
-      Headers.(add_list headers (to_list hdrs)), Some params_str in
-  let req = { req with headers } in
-  Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
-  Async_uri.with_connection
-    ?version ?options ?buffer_age_limit ?interrupt
-    ?reader_buffer_size ?writer_buffer_size ?timeout
-    service.url begin fun _sock _conn r w ->
-    let body, conn =
-      Client_connection.request ?config req
-        ~error_handler:(error_handler error_iv)
-        ~response_handler:(response_handler service resp_iv error_iv) in
-    begin
-      match params_str with
-      | Some ps ->
-        Log.debug (fun m -> m "%s" ps) ;
-        Body.write_string body ps
-      | _ -> ()
-    end ;
-    flush_req conn w ;
-    read_response conn r ;
-    Deferred.any Ivar.[read resp_iv ; read error_iv]
-  end
+    let headers = Headers.of_list ["accept", "application/json"] in
+    let req = Request.create ~headers service.meth (Uri.path_and_query service.url) in
+    let req, service = match req.meth, service.auth, auth with
+      | _, _, None -> req, service
+      | _, None, _ -> req, service
+      | `PUT, Some authf, Some auth
+      | `POST, Some authf, Some auth ->
+        let { params ; headers } = authf service auth in
+        { req with headers = Headers.(add_list req.headers (to_list headers)) },
+        { service with params }
+      | `DELETE, Some authf, Some auth
+      | `GET, Some authf, Some auth ->
+        let { params ; headers } = authf service auth in
+        let ps = match params with
+          | Form ps -> ps
+          | _ -> assert false in
+        { req with
+          headers = Headers.(add_list req.headers (to_list headers)) ;
+          target = Uri.(path_and_query (with_query service.url ps)) ;
+        }, service
+      | _ -> invalid_arg "unsupported method"
+    in
+    let headers = Headers.add_list req.headers [
+        "User-Agent", "ocaml-fastrest" ;
+        "Host", Uri.host_with_default ~default:"" service.url ;
+        "Connection", "close" ;
+      ] in
+    let headers, params_str =
+      match body_hdrs_of_service service with
+      | None -> headers, None
+      | Some (hdrs, params_str) ->
+        Headers.(add_list headers (to_list hdrs)), Some params_str in
+    let req = { req with headers } in
+    Log_async.debug (fun m -> m "%a" Request.pp_hum req) >>= fun () ->
+    Async_uri.with_connection
+      ?version ?options ?buffer_age_limit ?interrupt
+      ?reader_buffer_size ?writer_buffer_size ?timeout
+      service.url begin fun _sock _conn r w ->
+      let body, conn =
+        Client_connection.request ?config req
+          ~error_handler:(error_handler error_iv)
+          ~response_handler:(response_handler service ~resp_iv ~error_iv) in
+      begin
+        match params_str with
+        | Some ps ->
+          Log.debug (fun m -> m "%s" ps) ;
+          Body.write_string body ps
+        | _ -> ()
+      end ;
+      flush_req conn w ;
+      read_response conn r ;
+      Deferred.any [(Ivar.read resp_iv >>= Deferred.Or_error.return) ;
+                    (Ivar.read error_iv >>= Deferred.Or_error.fail)] |>
+      Deferred.Or_error.ok_exn
+    end
 
 let error_handler = function
   | `Exn exn ->
