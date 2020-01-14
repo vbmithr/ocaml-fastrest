@@ -4,9 +4,6 @@
  (modules fastrest)
  (preprocess (pps ppx_sexp_conv))
  (libraries
-  base64
-  digestif.c
-  ptime
   uri
   logs-async
   httpaf
