@@ -5,18 +5,14 @@ let wrap_request
     ?(timeout=Time.Span.of_int_sec 1)
     ?(speed=`Quick) n service =
   Alcotest_async.test_case ~timeout n speed begin fun () ->
-    (Fastrest.request service) |>
-    Deferred.Or_error.ignore |>
-    Deferred.Or_error.ok_exn
+    (Fastrest.request service)
   end
 
 let wrap_request_light
     ?(timeout=Time.Span.of_int_sec 1)
     ?(speed=`Quick) n f =
   Alcotest_async.test_case ~timeout n speed begin fun () ->
-    f () |>
-    Deferred.Or_error.ignore |>
-    Deferred.Or_error.ok_exn
+    f ()
   end
 
 let symbols =
@@ -30,8 +26,8 @@ let tickers =
 let basic = [
   wrap_request_light "simple" begin fun () ->
     Fastrest.simple_call_string ~meth:`GET
-      (Uri.make ~scheme:"http" ~host:"www.google.com" ()) >>= fun _ ->
-    Deferred.Or_error.return ()
+      (Uri.make ~scheme:"http" ~host:"www.google.com" ()) |>
+    Deferred.ignore
   end ;
   wrap_request "bfx_symbols" symbols ;
   wrap_request "bfx_tickers" tickers ;
