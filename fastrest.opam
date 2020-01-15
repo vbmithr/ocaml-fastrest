@@ -6,6 +6,7 @@ bug-reports: "https://github.com/vbmithr/ocaml-warp10/issues"
 dev-repo: "git+https://github.com/vbmithr/ocaml-warp10"
 doc: "https://vbmithr.github.io/ocaml-warp10/doc"
 build: [ "dune" "build" "-j" jobs "-p" name ]
+run-test: [ "dune" "runtest" "-j" jobs "-p" name ]
 depends: [
   "dune" {>= "1.11.4"}
   "uri" {>= "3.1.0"}
@@ -15,7 +16,9 @@ depends: [
   "async-uri" {= version}
   "ezjsonm" {>= "1.1.0"}
   "ocplib-json-typed" {>= "0.7.1"}
+  "logs-async-reporter" {with-test & = version}
+  "alcotest-async" {with-test & >= "0.8.5"}
 ]
-synopsis: "Somewhat typed client library to do simple REST queries."
+synopsis: "Somewhat typed client library to do simple REST queries"
 description: """
 """
