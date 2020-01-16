@@ -1,10 +1,10 @@
 opam-version: "2.0"
 authors: "Vincent Bernardoff <vb@luminar.eu.org>"
 maintainer: "Vincent Bernardoff <vb@luminar.eu.org>"
-homepage: "https://github.com/vbmithr/ocaml-warp10"
-bug-reports: "https://github.com/vbmithr/ocaml-warp10/issues"
-dev-repo: "git+https://github.com/vbmithr/ocaml-warp10"
-doc: "https://vbmithr.github.io/ocaml-warp10/doc"
+homepage: "https://github.com/vbmithr/ocaml-fastrest"
+bug-reports: "https://github.com/vbmithr/ocaml-fastrest/issues"
+dev-repo: "git+https://github.com/vbmithr/ocaml-fastrest"
+doc: "https://vbmithr.github.io/ocaml-fastrest/doc"
 build: [ "dune" "build" "-j" jobs "-p" name ]
 run-test: [ "dune" "runtest" "-j" jobs "-p" name ]
 depends: [
