@@ -4,10 +4,12 @@
  (modules fastrest)
  (preprocess (pps ppx_sexp_conv))
  (libraries
-  uri
-  logs-async
-  httpaf
-  httpaf-async
-  async-uri
-  ezjsonm
-  ocplib-json-typed))
+   core
+   async
+   uri
+   logs-async
+   httpaf
+   httpaf-async
+   async-uri
+   ezjsonm
+   ocplib-json-typed))
