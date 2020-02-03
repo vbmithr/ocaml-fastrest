@@ -90,7 +90,7 @@ val request :
 
 val simple_call :
   ?version:Async_ssl.Version.t ->
-  ?options:Async_ssl.Opt.t sexp_list ->
+  ?options:Async_ssl.Opt.t list ->
   ?socket:([ `Unconnected ], Socket.Address.Inet.t) Socket.t ->
   ?buffer_age_limit:[ `At_most of Time.Span.t | `Unlimited ] ->
   ?interrupt:unit Deferred.t ->
@@ -105,7 +105,7 @@ val simple_call :
 
 val simple_call_string :
   ?version:Async_ssl.Version.t ->
-  ?options:Async_ssl.Opt.t sexp_list ->
+  ?options:Async_ssl.Opt.t list ->
   ?buffer_age_limit:[ `At_most of Time.Span.t | `Unlimited ] ->
   ?interrupt:unit Deferred.t ->
   ?reader_buffer_size:int ->

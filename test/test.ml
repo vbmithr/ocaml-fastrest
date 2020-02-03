@@ -27,7 +27,7 @@ let basic = [
   wrap_request_light "simple" begin fun () ->
     Fastrest.simple_call_string ~meth:`GET
       (Uri.make ~scheme:"http" ~host:"www.google.com" ()) |>
-    Deferred.ignore
+    Deferred.ignore_m
   end ;
   wrap_request "bfx_symbols" symbols ;
   wrap_request "bfx_tickers" tickers ;
