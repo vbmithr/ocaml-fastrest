@@ -212,7 +212,7 @@ let request :
     Async_uri.with_connection
       ?version ?options ?buffer_age_limit ?interrupt
       ?reader_buffer_size ?writer_buffer_size ?timeout
-      service.url begin fun _sock _conn r w ->
+      service.url begin fun { r; w; _ } ->
       let body, conn =
         Client_connection.request ?config req
           ~error_handler:(error_handler error_iv)
@@ -266,7 +266,7 @@ let simple_call
         (Int.to_string (String.(length body))) in
   Async_uri.connect
     ?version ?options ?socket ?buffer_age_limit ?interrupt
-    ?reader_buffer_size ?writer_buffer_size ?timeout url >>= fun (_sock, _conn, r, w) ->
+    ?reader_buffer_size ?writer_buffer_size ?timeout url >>= fun { r; w; _ } ->
   let req = Request.create ~headers meth (Uri.path_and_query url) in
   let body_writer, conn =
     Client_connection.request ?config req ~error_handler ~response_handler in
@@ -307,7 +307,7 @@ let simple_call_string
         (Int.to_string (String.(length body))) in
   Async_uri.with_connection
     ?version ?options ?buffer_age_limit ?interrupt
-    ?reader_buffer_size ?writer_buffer_size ?timeout url begin fun _sock _conn r w ->
+    ?reader_buffer_size ?writer_buffer_size ?timeout url begin fun { r; w; _ } ->
     let req = Request.create ~headers meth (Uri.path_and_query url) in
     let body_writer, conn =
       Client_connection.request ?config req ~error_handler ~response_handler in
