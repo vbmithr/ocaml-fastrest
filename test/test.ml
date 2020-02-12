@@ -34,8 +34,6 @@ let basic = [
 ]
 
 let () =
-  Logs.set_level (Some Debug) ;
-  Logs.set_reporter (Logs_async_reporter.reporter ()) ;
   Alcotest.run ~and_exit:false "fastrest" [
     "basic", basic ;
   ]
