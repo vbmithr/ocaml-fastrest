@@ -19,8 +19,7 @@ depends: [
   "async-uri" {= version}
   "ezjsonm" {>= "1.1.0"}
   "ocplib-json-typed" {>= "0.7.1"}
-  "alcotest" {with-test & >= "0.8.5"}
-  "alcotest-async" {with-test & >= "0.8.5"}
+  "alcotest-async" {with-test & >= "1.0.0"}
 ]
 synopsis: "Somewhat typed client library to do simple REST queries"
 description: """

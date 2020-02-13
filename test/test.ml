@@ -1,17 +1,18 @@
 open Core
 open Async
+open Alcotest_async
 
 let wrap_request
     ?(timeout=Time.Span.of_int_sec 1)
     ?(speed=`Quick) n service =
-  Alcotest_async.test_case ~timeout n speed begin fun () ->
+  test_case ~timeout n speed begin fun () ->
     (Fastrest.request service)
   end
 
 let wrap_request_light
     ?(timeout=Time.Span.of_int_sec 1)
     ?(speed=`Quick) n f =
-  Alcotest_async.test_case ~timeout n speed begin fun () ->
+  test_case ~timeout n speed begin fun () ->
     f ()
   end
 
@@ -33,7 +34,11 @@ let basic = [
   wrap_request "bfx_tickers" tickers ;
 ]
 
-let () =
-  Alcotest.run ~and_exit:false "fastrest" [
+let main () =
+  run "fastrest" [
     "basic", basic ;
   ]
+
+let () =
+  don't_wait_for (main ()) ;
+  never_returns (Scheduler.go ())
